@@ -6,11 +6,24 @@
 #include <libopencm3/stm32/timer.h>
 #include <libopencm3/stm32/dma.h>
 #include <libopencm3/stm32/l4/nvic.h>
+#include <math.h>
 
 #define SAMPLE_RATE 44100
 #define BUFFER_SIZE 64
 
 static uint16_t samples[BUFFER_SIZE * 2];
+
+const struct {
+    uint32_t gpioport;
+    uint16_t gpio;
+} button_gpios[] = {
+    {GPIOB, GPIO6}, // Strum
+    {GPIOA, GPIO8}, // 1
+    {GPIOB, GPIO1}, // 2
+    {GPIOA, GPIO11}, // 3
+    {GPIOB, GPIO4}, // 4
+    {GPIOB, GPIO5}, // 5
+};
 
 void hal_init(void) {
 	rcc_osc_on(RCC_HSI16);
@@ -24,14 +37,23 @@ void hal_init(void) {
 			0, 0, RCC_PLLCFGR_PLLR_DIV2);
 	rcc_osc_on(RCC_PLL);
 	/* either rcc_wait_for_osc_ready() or do other things */
+    rcc_wait_for_osc_ready(RCC_PLL);
+    rcc_set_sysclk_source(RCC_CFGR_SW_PLL);
     const uint32_t sysclk_freq = 80000000;
 
     // Enable peripheral clocks
 	rcc_periph_clock_enable(RCC_GPIOA);
+	rcc_periph_clock_enable(RCC_GPIOB);
 	rcc_periph_clock_enable(RCC_DAC1);
 	rcc_periph_clock_enable(RCC_TIM2);
 	rcc_periph_clock_enable(RCC_DMA1);
 
+    // Set up GPIO for buttons
+    for (int i=0; i<sizeof(button_gpios) / sizeof(*button_gpios); i++) {
+        gpio_mode_setup(button_gpios[i].gpioport, GPIO_MODE_INPUT, GPIO_PUPD_PULLUP, button_gpios[i].gpio);
+    }
+
+    // Set up DMA for audio output
     nvic_set_priority(NVIC_DMA1_CHANNEL3_IRQ, 0);
 	nvic_enable_irq(NVIC_DMA1_CHANNEL3_IRQ);
 
@@ -62,11 +84,38 @@ void hal_init(void) {
 	dac_enable(CHANNEL_1);
 }
 
+uint32_t hal_buttons() {
+    uint32_t buttons = 0;
+    for (int i=0; i<sizeof(button_gpios) / sizeof(*button_gpios); i++) {
+        buttons |= (!gpio_get(button_gpios[i].gpioport, button_gpios[i].gpio)) << i;
+    }
+    return buttons;
+}
+
 static void hal_fill(uint16_t *buffer) {
-    static uint32_t counter = 0;
-    const int n = 10;
+    static float counter = 0;
+    const float freqs[] = {
+        16.f / 15.f,
+        9.f / 8.f,
+        5.f / 4.f,
+        3.f / 2.f,
+        2.f,
+    };
+
+    float n = 100;
+    uint32_t buttons = hal_buttons();
+    for (int i=0; i<5; i++) {
+        if (buttons & (2 << i)) {
+            n /= freqs[i];
+        }
+    }
     for (int i=0; i<BUFFER_SIZE; i++) {
-        buffer[i] = (counter % n < n / 2) ? (1 << 16) - 1 : 0;
+        if (buttons & 1) {
+            buffer[i] = (counter < n / 2) ? (1 << 16) - 1 : 0;
+            if (counter >= n) counter -= n;
+        } else {
+            buffer[i] = 0;
+        }
         counter++;
     }
 }

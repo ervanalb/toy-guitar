@@ -1,3 +1,6 @@
 [submodule "libopencm3"]
 	path = libopencm3
 	url = https://github.com/ervanalb/libopencm3
+[submodule "src/birb"]
+	path = src/birb
+	url = https://github.com/zbanks/birb.git

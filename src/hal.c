@@ -9,6 +9,7 @@
 #include <math.h>
 
 static uint8_t samples[BUFFER_SIZE * 2];
+int DEBOUNCE_CYCLES = 10;
 
 const struct {
     uint32_t gpioport;
@@ -20,7 +21,11 @@ const struct {
     {GPIOA, GPIO11}, // 3
     {GPIOB, GPIO4}, // 4
     {GPIOB, GPIO5}, // 5
+    {GPIOB, GPIO7}, // Whammy
 };
+
+// D6,  D5,  D4,  D3,  D2
+// PB1, PB6, PB7, PB0, PA12
 
 void hal_init(void) {
 	rcc_osc_on(RCC_HSI16);
@@ -85,9 +90,17 @@ void hal_init(void) {
 }
 
 uint32_t hal_buttons() {
+    static int release_counter[sizeof(button_gpios) / sizeof(*button_gpios)];
+
     uint32_t buttons = 0;
     for (unsigned i=0; i<sizeof(button_gpios) / sizeof(*button_gpios); i++) {
-        buttons |= (!gpio_get(button_gpios[i].gpioport, button_gpios[i].gpio)) << i;
+        uint8_t b = !gpio_get(button_gpios[i].gpioport, button_gpios[i].gpio);
+        if (b) {
+            release_counter[i] = DEBOUNCE_CYCLES;
+        } else {
+            if (release_counter[i]) release_counter[i]--;
+        }
+        buttons |= (release_counter[i] > 0) << i;
     }
     return buttons;
 }

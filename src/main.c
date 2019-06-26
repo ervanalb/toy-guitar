@@ -95,37 +95,124 @@ static void hal_fill_programming_mode(uint8_t *buffer) {
 }
 
 static void hal_fill_play_mode(uint8_t *buffer) {
-    static uint32_t counter;
     static uint32_t last_buttons;
     uint32_t buttons = hal_buttons();
+    static int32_t open = 60;
+    static int32_t mod = 60;
+    static uint64_t t;
+    static uint64_t u;
+    static uint64_t t1;
+    static uint64_t t2;
+    static uint64_t t3;
+    static enum {
+        MODE_MEL_PITCH,
+        MODE_MEL_MOD,
+        MODE_HAR_PITCH,
+        MODE_HAR_MOD,
+        N_MODES,
+    } play_mode;
 
-    float note = 60; // Open
+    if (play_mode == MODE_MEL_PITCH || play_mode == MODE_HAR_PITCH) {
+        open += hal_encoder();
+    } else if (play_mode == MODE_MEL_MOD || play_mode == MODE_HAR_MOD) {
+        mod += hal_encoder();
+    }
 
-    const float frets[] = {
+    const int frets[] = {
         2,
         1,
         3,
         7,
         12,
     };
+
+    int fretting = 0;
     for (int i=0; i<N_FRETS; i++) {
         if (buttons & (1 << (FRETS_OFFSET + i))) {
-            note += frets[i];
+            fretting += frets[i];
         }
     }
 
-    float freq = get_freq(note);
+    if (play_mode == MODE_MEL_PITCH || play_mode == MODE_MEL_MOD) {
+        float note = open; // Open
+        note += fretting;
 
-    if (!(last_buttons & STRUM) && (buttons & STRUM)) counter = 0;
+        float note_freq = get_freq(note);
+        float mod_freq = get_freq(mod);
 
-    for (int i=0; i<BUFFER_SIZE; i++) {
-        if (buttons & STRUM) {
-            uint32_t t = counter * (256.f / SAMPLE_RATE) * freq ;
-            buffer[i] = birb_eval(current_program, t, counter);
-        } else {
-            buffer[i] = 0;
+        if (!(last_buttons & STRUM) && (buttons & STRUM)) {
+            t = 0;
+            u = 0;
         }
-        counter++;
+
+        for (int i=0; i<BUFFER_SIZE; i++) {
+            if (buttons & STRUM) {
+                t += (int32_t)(((float)(1 << 16)) * (256.f / SAMPLE_RATE) * note_freq);
+                u += (int32_t)(((float)(1 << 16)) * (256.f / SAMPLE_RATE) * mod_freq);
+                buffer[i] = birb_eval(current_program, t >> 16, u >> 16);
+            } else {
+                buffer[i] = 0;
+            }
+        }
+    } else if (play_mode == MODE_HAR_PITCH || play_mode == MODE_HAR_MOD) {
+        const int chords[][3] = {
+            {0, 4, 7}, // C
+            {1, 4, 7}, // C#dim
+            {2, 5, 9}, // Dm
+            {3, 7, 10}, // Eb
+            {4, 7, 11}, // Em
+            {5, 9, 12}, // F
+            {2, 6, 9}, // D
+            {7, 11, 14}, // G
+            {5, 8, 12}, // Fm
+            {9, 12, 16}, // Am
+            {5, 10, 14}, // Bb
+            {4, 8, 11}, // E
+        };
+        float n1;
+        float n2;
+        float n3;
+        if (fretting < 0 || fretting >= (int)(sizeof(chords) / sizeof(*chords))) {
+            n1 = open + fretting;
+            n2 = open + fretting;
+            n3 = open + fretting;
+        } else {
+            n1 = open + chords[fretting][0];
+            n2 = open + chords[fretting][1];
+            n3 = open + chords[fretting][2];
+        }
+
+        float f1 = get_freq(n1);
+        float f2 = get_freq(n2);
+        float f3 = get_freq(n3);
+        float mod_freq = get_freq(mod);
+
+        if (!(last_buttons & STRUM) && (buttons & STRUM)) {
+            t1 = 0;
+            t2 = 0;
+            t3 = 0;
+            u = 0;
+        }
+
+        for (int i=0; i<BUFFER_SIZE; i++) {
+            if (buttons & STRUM) {
+                t1 += (int32_t)(((float)(1 << 16)) * (256.f / SAMPLE_RATE) * f1);
+                t2 += (int32_t)(((float)(1 << 16)) * (256.f / SAMPLE_RATE) * f2);
+                t3 += (int32_t)(((float)(1 << 16)) * (256.f / SAMPLE_RATE) * f3);
+                u += (int32_t)(((float)(1 << 16)) * (256.f / SAMPLE_RATE) * mod_freq);
+                uint8_t s1 = birb_eval(current_program, t1 >> 16, u >> 16);
+                uint8_t s2 = birb_eval(current_program, t2 >> 16, u >> 16);
+                uint8_t s3 = birb_eval(current_program, t3 >> 16, u >> 16);
+                buffer[i] = 0.33f * (s1 + s2 + s3);
+            } else {
+                buffer[i] = 0;
+            }
+        }
+    }
+
+    if (!(last_buttons & WHAMMY) && (buttons & WHAMMY)) {
+        play_mode++;
+        if (play_mode >= N_MODES) play_mode = 0;
     }
     last_buttons = buttons;
 }

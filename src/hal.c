@@ -6,6 +6,7 @@
 #include <libopencm3/stm32/timer.h>
 #include <libopencm3/stm32/dma.h>
 #include <libopencm3/stm32/l4/nvic.h>
+#include <libopencm3/stm32/exti.h>
 #include <math.h>
 
 static uint8_t samples[BUFFER_SIZE * 2];
@@ -21,7 +22,7 @@ const struct {
     {GPIOA, GPIO11}, // 3
     {GPIOB, GPIO4}, // 4
     {GPIOB, GPIO5}, // 5
-    {GPIOB, GPIO7}, // Whammy
+    {GPIOA, GPIO0}, // Whammy
 };
 
 // D6,  D5,  D4,  D3,  D2
@@ -49,17 +50,23 @@ void hal_init(void) {
 	rcc_periph_clock_enable(RCC_DAC1);
 	rcc_periph_clock_enable(RCC_TIM2);
 	rcc_periph_clock_enable(RCC_DMA1);
+    //rcc_periph_clock_enable(RCC_AFIO);
+    //rcc_periph_clock_enable(RCC_EXTI);
 
     // Set up GPIO for buttons
     for (unsigned i=0; i<sizeof(button_gpios) / sizeof(*button_gpios); i++) {
         gpio_mode_setup(button_gpios[i].gpioport, GPIO_MODE_INPUT, GPIO_PUPD_PULLUP, button_gpios[i].gpio);
     }
 
+    // Set up GPIO for encoder
+    gpio_mode_setup(GPIOA, GPIO_MODE_INPUT, GPIO_PUPD_PULLUP, GPIO12);
+    gpio_mode_setup(GPIOB, GPIO_MODE_INPUT, GPIO_PUPD_PULLUP, GPIO0);
+
     // Enable speaker
     gpio_mode_setup(GPIOA, GPIO_MODE_OUTPUT, GPIO_PUPD_NONE, GPIO5);
 
     // Set up DMA for audio output
-    nvic_set_priority(NVIC_DMA1_CHANNEL3_IRQ, 0);
+    nvic_set_priority(NVIC_DMA1_CHANNEL3_IRQ, 1);
 	nvic_enable_irq(NVIC_DMA1_CHANNEL3_IRQ);
 
 	dma_channel_reset(DMA1, DMA_CHANNEL3);
@@ -102,7 +109,28 @@ uint32_t hal_buttons() {
         }
         buttons |= (release_counter[i] > 0) << i;
     }
+
     return buttons;
+}
+
+int hal_encoder() {
+    static bool last_a;
+
+    bool a = !gpio_get(GPIOA, GPIO12);
+    bool b = !gpio_get(GPIOB, GPIO0);
+    int result = 0;
+
+    if (a && a != last_a) {
+        if (b) {
+            result = 1;
+        } else {
+            result = -1;
+        }
+    }
+
+    last_a = a;
+
+    return result;
 }
 
 void dma1_channel3_isr() {

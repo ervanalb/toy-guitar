@@ -11,6 +11,8 @@
 
 static uint8_t samples[BUFFER_SIZE * 2];
 int DEBOUNCE_CYCLES = 10;
+static int SAMPLE_RATE = 8000;
+static const uint32_t sysclk_freq = 80000000;
 
 const struct {
     uint32_t gpioport;
@@ -42,7 +44,6 @@ void hal_init(void) {
 	/* either rcc_wait_for_osc_ready() or do other things */
     rcc_wait_for_osc_ready(RCC_PLL);
     rcc_set_sysclk_source(RCC_CFGR_SW_PLL);
-    const uint32_t sysclk_freq = 80000000;
 
     // Enable peripheral clocks
 	rcc_periph_clock_enable(RCC_GPIOA);
@@ -94,6 +95,16 @@ void hal_init(void) {
     dac_trigger_enable(CHANNEL_1);
 	dac_set_trigger_source(DAC_CR_TSEL1_T2); // Trigger on timer 2
 	dac_enable(CHANNEL_1);
+}
+
+void hal_set_sample_rate(int sample_rate) {
+    if (SAMPLE_RATE == sample_rate) return;
+    // Set up TIM2 to trigger DAC
+    SAMPLE_RATE = sample_rate;
+	timer_disable_counter(TIM2);
+	timer_set_period(TIM2, sysclk_freq / SAMPLE_RATE);
+	timer_set_master_mode(TIM2, TIM_CR2_MMS_UPDATE); // Connect TIM2 to the DAC
+	timer_enable_counter(TIM2);
 }
 
 uint32_t hal_buttons() {

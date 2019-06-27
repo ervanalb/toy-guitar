@@ -3,6 +3,22 @@
 #define BIRB_SHORTHAND
 #include "birb/birb.h"
 
+#define ROM __attribute__ ((section (".rodata")))
+#include "audio/0.h"
+#include "audio/1.h"
+#include "audio/2.h"
+#include "audio/3.h"
+#include "audio/4.h"
+#include "audio/5.h"
+#include "audio/6.h"
+#include "audio/7.h"
+#include "audio/8.h"
+#include "audio/9.h"
+
+#define SAMPLE_RATE_HIGH 44100
+static uint32_t audio_lengths[32];
+static const unsigned char *audios[32];
+
 // (t*5&t>>7)|(t*3&t>>10)
 static uint8_t current_program[64] = {
     T, 5, MUL,
@@ -18,6 +34,12 @@ static uint8_t current_program[64] = {
 static enum {PROGRAMMING, PLAY} mode;
 
 int main(void) {
+#define AUDIOS X(0) X(1) X(2) X(3) X(4) X(5) X(6) X(7) X(8) X(9)
+#define CONCAT(x, y) x ## y
+#define X(N) audio_lengths[N] = sizeof(CONCAT(audio_, N)); audios[N] = CONCAT(audio_, N);
+    AUDIOS
+#undef X
+
     hal_init();
     DEBOUNCE_CYCLES = 100;
     for(;;);
@@ -70,26 +92,38 @@ static void hal_fill_programming_mode(uint8_t *buffer) {
                 program_counter -= zero_counter;
                 opcode = END;
                 mode = PLAY;
+                hal_set_sample_rate(44100);
                 DEBOUNCE_CYCLES = 10;
                 sfx = bleep;
-                counter = 0;
+                //counter = 0;
             }
             zero_counter++;
         } else {
             zero_counter = 0;
         }
         sfx = bloop;
-        counter = 0;
+        //counter = 0;
         current_program[program_counter] = opcode;
         program_counter++;
     }
 
+    static uint32_t digit = 0;
     for (int i=0; i<BUFFER_SIZE; i++) {
-        buffer[i] = sfx(counter++);
+        if (counter < audio_lengths[digit])
+            buffer[i] = audios[digit][counter++];
+        else
+            buffer[i] = 0;
     }
+    if (counter >= audio_lengths[digit]) {
+        counter = 0;
+        digit++;
+        if (digit >= 10) digit = 0;
+    }
+    /*
     if (counter > 100000) {
       sfx = silence;
     }
+    */
 
     last_buttons = buttons;
 }
@@ -147,8 +181,8 @@ static void hal_fill_play_mode(uint8_t *buffer) {
 
         for (int i=0; i<BUFFER_SIZE; i++) {
             if (buttons & STRUM) {
-                t += (int32_t)(((float)(1 << 16)) * (256.f / SAMPLE_RATE) * note_freq);
-                u += (int32_t)(((float)(1 << 16)) * (256.f / SAMPLE_RATE) * mod_freq);
+                t += (int32_t)(((float)(1 << 16)) * (256.f / SAMPLE_RATE_HIGH) * note_freq);
+                u += (int32_t)(((float)(1 << 16)) * (256.f / SAMPLE_RATE_HIGH) * mod_freq);
                 buffer[i] = birb_eval(current_program, t >> 16, u >> 16);
             } else {
                 buffer[i] = 0;
@@ -196,10 +230,10 @@ static void hal_fill_play_mode(uint8_t *buffer) {
 
         for (int i=0; i<BUFFER_SIZE; i++) {
             if (buttons & STRUM) {
-                t1 += (int32_t)(((float)(1 << 16)) * (256.f / SAMPLE_RATE) * f1);
-                t2 += (int32_t)(((float)(1 << 16)) * (256.f / SAMPLE_RATE) * f2);
-                t3 += (int32_t)(((float)(1 << 16)) * (256.f / SAMPLE_RATE) * f3);
-                u += (int32_t)(((float)(1 << 16)) * (256.f / SAMPLE_RATE) * mod_freq);
+                t1 += (int32_t)(((float)(1 << 16)) * (256.f / SAMPLE_RATE_HIGH) * f1);
+                t2 += (int32_t)(((float)(1 << 16)) * (256.f / SAMPLE_RATE_HIGH) * f2);
+                t3 += (int32_t)(((float)(1 << 16)) * (256.f / SAMPLE_RATE_HIGH) * f3);
+                u += (int32_t)(((float)(1 << 16)) * (256.f / SAMPLE_RATE_HIGH) * mod_freq);
                 uint8_t s1 = birb_eval(current_program, t1 >> 16, u >> 16);
                 uint8_t s2 = birb_eval(current_program, t2 >> 16, u >> 16);
                 uint8_t s3 = birb_eval(current_program, t3 >> 16, u >> 16);
@@ -220,9 +254,11 @@ static void hal_fill_play_mode(uint8_t *buffer) {
 void hal_fill(uint8_t *buffer) {
     switch (mode) {
         case PROGRAMMING:
+            hal_set_sample_rate(8000);
             hal_fill_programming_mode(buffer);
             break;
         case PLAY:
+            hal_set_sample_rate(SAMPLE_RATE_HIGH);
             hal_fill_play_mode(buffer);
             break;
     }

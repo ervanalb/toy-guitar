@@ -8,7 +8,7 @@ CFLAGS += -ggdb3
 #CFLAGS += -funroll-loops
 #LDFLAGS += -flto
 
-INCLUDES += -Isrc
+INCLUDES += -Isrc -Iaudio
 
 DEVICE=stm32l432kcu6u
 
@@ -16,6 +16,13 @@ OPENCM3_DIR=libopencm3
 
 CFILES += src/main.c
 CFILES += src/hal.c
+
+audio/%.h: audio/%.wav
+	echo "static unsigned char audio_$*[] ROM = {" > $@
+	sox $^ -t u8 -r 8000 - | xxd -i >> $@
+	echo "};" >> $@
+
+bin/src/main.o: $(patsubst %.wav,%.h,$(wildcard audio/*.wav))
 
 include $(OPENCM3_DIR)/mk/genlink-config.mk
 include rules.mk

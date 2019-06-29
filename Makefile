@@ -37,4 +37,4 @@ load: $(PROJECT).elf
 stflash: $(PROJECT).bin
 	st-flash write $(PROJECT).bin 0x08000000
 
-.DEFAULT: all
+.DEFAULT_GOAL := all

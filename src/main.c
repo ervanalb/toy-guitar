@@ -6,9 +6,13 @@
 #define ROM __attribute__ ((section (".rodata")))
 #include "audio.h"
 
-#define SAMPLE_RATE_HIGH 44100
 static uint32_t audio_lengths[32];
-static const unsigned char *audios[32];
+static const uint8_t *audios[32];
+
+static const uint8_t digits_pi[] = {3,1,4,1,5,9,2,6,5,3,5,9};
+static const uint8_t digits_e[] = {2,7,1,8,2,8};
+
+static const uint8_t audio_silence[1] = {0};
 
 // (t*5&t>>7)|(t*3&t>>10)
 static uint8_t current_program[64] = {
@@ -22,12 +26,15 @@ static uint8_t current_program[64] = {
     END,
 };
 
-static enum {PROGRAMMING, PLAY} mode;
+static enum {PROGRAMMING, PLAY, NUMBERS_PI, NUMBERS_E} mode = NUMBERS_PI;
 
 int main(void) {
-#define AUDIOS X(0) X(1) X(2) X(3) X(4) X(5) X(6) X(7) X(8) X(9)
+    // Redo: T, U, left, right, swap,
+    uint8_t i = 0;
+#define AUDIOS X(0) X(1) X(2) X(3) X(4) X(5) X(6) X(7) X(8) X(9) X(a) X(b) X(c) X(d) X(e) X(f) \
+    X(t) X(u) X(shl) X(shr) X(dig) X(and) X(or) X(xor) X(add) X(sub) X(mul) X(div) X(mod) X(swp) X(dup) X(silence)
 #define CONCAT(x, y) x ## y
-#define X(N) audio_lengths[N] = sizeof(CONCAT(audio_, N)); audios[N] = CONCAT(audio_, N);
+#define X(N) audio_lengths[i] = sizeof(CONCAT(audio_, N)); audios[i] = CONCAT(audio_, N); i++;
     AUDIOS
 #undef X
 
@@ -68,7 +75,45 @@ static uint8_t bloop(uint32_t t) {
     return 2 * t * (t < 1000);
 }
 
-static void hal_fill_programming_mode(uint8_t *buffer) {
+static int fill_sample(uint8_t *buffer, uint8_t sample_id) {
+    static uint32_t counter = 0;
+    static uint16_t last = 0;
+    int rc = 0;
+
+    uint32_t i = 0;
+    for (; i < BUFFER_SIZE; i++) {
+        uint16_t index = counter / 8;
+        if (index >= (audio_lengths[sample_id] - 1)) {
+            goto finished_sample;
+        }
+        uint16_t fade = counter & 0x7;
+        buffer[i] = (audios[sample_id][index+1] * fade) / 8;
+        buffer[i] += (audios[sample_id][index] * (8 - fade)) / 8;
+        buffer[i] = (last + buffer[i]) / 2;
+        last = buffer[i];
+        counter++;
+    }
+    return 0;
+
+finished_sample:
+    for (; i < BUFFER_SIZE; i++) {
+        buffer[i] = 0x80;
+    }
+    counter = 0;
+    last = 0x80;
+    return 1;
+}
+
+static void fill_numbers_mode(uint8_t *buffer, const uint8_t *digits, uint8_t n_digits) {
+    static uint32_t d = 0;
+    if (d < n_digits) {
+        d += fill_sample(buffer, digits[d]);
+    } else {
+        d += fill_sample(buffer, d % 10);
+    }
+}
+
+static void fill_programming_mode(uint8_t *buffer) {
     uint32_t buttons = hal_buttons();
     static int program_counter;
     static uint32_t last_buttons;
@@ -83,7 +128,6 @@ static void hal_fill_programming_mode(uint8_t *buffer) {
                 program_counter -= zero_counter;
                 opcode = END;
                 mode = PLAY;
-                hal_set_sample_rate(44100);
                 DEBOUNCE_CYCLES = 10;
                 sfx = bleep;
                 //counter = 0;
@@ -98,18 +142,8 @@ static void hal_fill_programming_mode(uint8_t *buffer) {
         program_counter++;
     }
 
-    static uint32_t digit = 0;
-    for (int i=0; i<BUFFER_SIZE; i++) {
-        if (counter < audio_lengths[digit])
-            buffer[i] = audios[digit][counter++];
-        else
-            buffer[i] = 0;
-    }
-    if (counter >= audio_lengths[digit]) {
-        counter = 0;
-        digit++;
-        if (digit >= 10) digit = 0;
-    }
+    static uint8_t digit = 0;
+    digit += fill_sample(buffer, digit & 31);
     /*
     if (counter > 100000) {
       sfx = silence;
@@ -119,7 +153,7 @@ static void hal_fill_programming_mode(uint8_t *buffer) {
     last_buttons = buttons;
 }
 
-static void hal_fill_play_mode(uint8_t *buffer) {
+static void fill_play_mode(uint8_t *buffer) {
     static uint32_t last_buttons;
     uint32_t buttons = hal_buttons();
     static int32_t open = 60;
@@ -172,8 +206,8 @@ static void hal_fill_play_mode(uint8_t *buffer) {
 
         for (int i=0; i<BUFFER_SIZE; i++) {
             if (buttons & STRUM) {
-                t += (int32_t)(((float)(1 << 16)) * (256.f / SAMPLE_RATE_HIGH) * note_freq);
-                u += (int32_t)(((float)(1 << 16)) * (256.f / SAMPLE_RATE_HIGH) * mod_freq);
+                t += (int32_t)(((float)(1 << 16)) * (256.f / SAMPLE_RATE) * note_freq);
+                u += (int32_t)(((float)(1 << 16)) * (256.f / SAMPLE_RATE) * mod_freq);
                 buffer[i] = birb_eval(current_program, t >> 16, u >> 16);
             } else {
                 buffer[i] = 0;
@@ -221,10 +255,10 @@ static void hal_fill_play_mode(uint8_t *buffer) {
 
         for (int i=0; i<BUFFER_SIZE; i++) {
             if (buttons & STRUM) {
-                t1 += (int32_t)(((float)(1 << 16)) * (256.f / SAMPLE_RATE_HIGH) * f1);
-                t2 += (int32_t)(((float)(1 << 16)) * (256.f / SAMPLE_RATE_HIGH) * f2);
-                t3 += (int32_t)(((float)(1 << 16)) * (256.f / SAMPLE_RATE_HIGH) * f3);
-                u += (int32_t)(((float)(1 << 16)) * (256.f / SAMPLE_RATE_HIGH) * mod_freq);
+                t1 += (int32_t)(((float)(1 << 16)) * (256.f / SAMPLE_RATE) * f1);
+                t2 += (int32_t)(((float)(1 << 16)) * (256.f / SAMPLE_RATE) * f2);
+                t3 += (int32_t)(((float)(1 << 16)) * (256.f / SAMPLE_RATE) * f3);
+                u += (int32_t)(((float)(1 << 16)) * (256.f / SAMPLE_RATE) * mod_freq);
                 uint8_t s1 = birb_eval(current_program, t1 >> 16, u >> 16);
                 uint8_t s2 = birb_eval(current_program, t2 >> 16, u >> 16);
                 uint8_t s3 = birb_eval(current_program, t3 >> 16, u >> 16);
@@ -245,12 +279,16 @@ static void hal_fill_play_mode(uint8_t *buffer) {
 void hal_fill(uint8_t *buffer) {
     switch (mode) {
         case PROGRAMMING:
-            hal_set_sample_rate(8000);
-            hal_fill_programming_mode(buffer);
+            fill_programming_mode(buffer);
             break;
         case PLAY:
-            hal_set_sample_rate(SAMPLE_RATE_HIGH);
-            hal_fill_play_mode(buffer);
+            fill_play_mode(buffer);
+            break;
+        case NUMBERS_PI:
+            fill_numbers_mode(buffer, digits_pi, sizeof(digits_pi));
+            break;
+        case NUMBERS_E:
+            fill_numbers_mode(buffer, digits_e, sizeof(digits_e));
             break;
     }
 }

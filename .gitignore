@@ -3,3 +3,4 @@ bin/
 *.map
 generated.*.ld
 *.bin
+src/audio.h

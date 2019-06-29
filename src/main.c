@@ -1,3 +1,4 @@
+#include <string.h>
 #include "hal.h"
 #include "midi.h"
 #define BIRB_SHORTHAND
@@ -12,10 +13,12 @@ static const uint8_t *audios[32];
 static const uint8_t digits_pi[] = {3,1,4,1,5,9,2,6,5,3,5,9};
 static const uint8_t digits_e[] = {2,7,1,8,2,8};
 
-static const uint8_t audio_silence[1] = {0};
+//static const uint8_t audio_silence[1] = {0};
 
 // (t*5&t>>7)|(t*3&t>>10)
-static uint8_t current_program[64] = {
+#define PROGRAM_MAX_LEN 1024
+static uint8_t current_program[PROGRAM_MAX_LEN] = {
+    END,
     T, 5, MUL,
     T, 7, SHR,
         AND,
@@ -26,13 +29,15 @@ static uint8_t current_program[64] = {
     END,
 };
 
-static enum {PROGRAMMING, PLAY, NUMBERS_PI, NUMBERS_E} mode = NUMBERS_PI;
+static enum {PROGRAMMING, PLAY, NUMBERS_PI, NUMBERS_E, TEST, BEEP} mode = PROGRAMMING;
+
+static int encoder = 0;
 
 int main(void) {
     // Redo: T, U, left, right, swap,
     uint8_t i = 0;
 #define AUDIOS X(0) X(1) X(2) X(3) X(4) X(5) X(6) X(7) X(8) X(9) X(a) X(b) X(c) X(d) X(e) X(f) \
-    X(t) X(u) X(shl) X(shr) X(dig) X(and) X(or) X(xor) X(add) X(sub) X(mul) X(div) X(mod) X(swp) X(dup) X(silence)
+    X(t) X(u) X(shl) X(shr) X(dig) X(and) X(or) X(xor) X(add) X(sub) X(mul) X(div) X(mod) X(swp) X(dup) X(rnd)
 #define CONCAT(x, y) x ## y
 #define X(N) audio_lengths[i] = sizeof(CONCAT(audio_, N)); audios[i] = CONCAT(audio_, N); i++;
     AUDIOS
@@ -40,7 +45,10 @@ int main(void) {
 
     hal_init();
     DEBOUNCE_CYCLES = 100;
-    for(;;);
+    for(;;) {
+        encoder += hal_encoder();
+        //for (volatile int i = 0; i < 1000; i++);
+    }
 }
 
 static float get_freq(float note) {
@@ -62,23 +70,13 @@ static float get_freq(float note) {
     return f;
 }
 
-static uint8_t silence(uint32_t t) {
-    (void)t;
-    return 0;
-}
-
-static uint8_t bleep(uint32_t t) {
-    return t * (t < 1000);
-}
-
-static uint8_t bloop(uint32_t t) {
-    return 2 * t * (t < 1000);
-}
-
 static int fill_sample(uint8_t *buffer, uint8_t sample_id) {
     static uint32_t counter = 0;
     static uint16_t last = 0;
-    int rc = 0;
+
+    if (sample_id >= 32) {
+        goto finished_sample;
+    }
 
     uint32_t i = 0;
     for (; i < BUFFER_SIZE; i++) {
@@ -109,46 +107,95 @@ static void fill_numbers_mode(uint8_t *buffer, const uint8_t *digits, uint8_t n_
     if (d < n_digits) {
         d += fill_sample(buffer, digits[d]);
     } else {
-        d += fill_sample(buffer, d % 10);
+        // Shh!
+        d += fill_sample(buffer, birb_hash(birb_hash((uintptr_t) digits) + d) % 10);
+    }
+}
+
+static void fill_test_mode(uint8_t *buffer) {
+    static uint8_t digit = 0;
+    digit += fill_sample(buffer, digit & 31);
+}
+
+static uint32_t beep_timeout = 0;
+static void fill_beep_mode(uint8_t *buffer) {
+    for (int i = 0; i < BUFFER_SIZE && beep_timeout > 0; i++) {
+        buffer[i] = ((beep_timeout >> 1) ^ (beep_timeout >> 4))& (BUFFER_SIZE - 1);
+        beep_timeout--;
+    }
+    if (beep_timeout == 0) {
+        memset(buffer, 0x80, BUFFER_SIZE);
+        mode = PLAY;
     }
 }
 
 static void fill_programming_mode(uint8_t *buffer) {
     uint32_t buttons = hal_buttons();
-    static int program_counter;
+    static int program_counter = 0;
+    static int max_program_counter = 0;
     static uint32_t last_buttons;
-    static uint8_t (*sfx)(uint32_t t) = silence;
-    static uint32_t counter;
     static int zero_counter;
+    static uint8_t feedback = 0xff;
+    static uint8_t random = 0;
+    if (buttons & WHAMMY) random++;
+
+    if (feedback != 0xff) {
+        goto feedback;
+    }
+
+    int enc = encoder; encoder = 0;
+    if (enc != 0) {
+        if (enc > 0) enc = 1;
+        else if (enc < 0) enc = -1;
+        program_counter += enc;
+        if (program_counter >= max_program_counter) program_counter = max_program_counter - 1;
+        if (program_counter < 0) program_counter = 0;
+        feedback = current_program[program_counter];
+        zero_counter = 0;
+        goto feedback;
+    }
 
     if (!(last_buttons & STRUM) && (buttons & STRUM)) {
         uint8_t opcode = (buttons >> FRETS_OFFSET) & ((1 << N_FRETS) - 1);
         if (opcode == 0) {
             if (zero_counter == 2) {
                 program_counter -= zero_counter;
-                opcode = END;
-                mode = PLAY;
+                if (program_counter != 0) {
+                    current_program[program_counter] = END;
+                }
                 DEBOUNCE_CYCLES = 10;
-                sfx = bleep;
-                //counter = 0;
+                beep_timeout = 8000;
+                if ((buttons & WHAMMY) && program_counter == 0) {
+                    if (random & 1) {
+                        mode = NUMBERS_E;
+                    } else {
+                        mode = NUMBERS_PI;
+                    }
+                } else {
+                    mode = BEEP;
+                }
+                return fill_beep_mode(buffer);
             }
             zero_counter++;
         } else {
             zero_counter = 0;
         }
-        sfx = bloop;
-        //counter = 0;
-        current_program[program_counter] = opcode;
-        program_counter++;
+        current_program[program_counter++] = opcode;
+        if (program_counter >= PROGRAM_MAX_LEN) program_counter = PROGRAM_MAX_LEN - 1;
+        if (program_counter > max_program_counter) max_program_counter = program_counter;
+        feedback = opcode;
+        goto feedback;
     }
 
-    static uint8_t digit = 0;
-    digit += fill_sample(buffer, digit & 31);
-    /*
-    if (counter > 100000) {
-      sfx = silence;
+    memset(buffer, 0x80, BUFFER_SIZE);
+
+feedback:
+    if (feedback != 0xff) {
+        if (fill_sample(buffer, feedback)) {
+            feedback = 0xff;
+        }
+        encoder = 0;
     }
-    */
 
     last_buttons = buttons;
 }
@@ -172,9 +219,9 @@ static void fill_play_mode(uint8_t *buffer) {
     } play_mode;
 
     if (play_mode == MODE_MEL_PITCH || play_mode == MODE_HAR_PITCH) {
-        open += hal_encoder();
+        open += encoder; encoder = 0;
     } else if (play_mode == MODE_MEL_MOD || play_mode == MODE_HAR_MOD) {
-        mod += hal_encoder();
+        mod += encoder; encoder = 0;
     }
 
     const int frets[] = {
@@ -289,6 +336,12 @@ void hal_fill(uint8_t *buffer) {
             break;
         case NUMBERS_E:
             fill_numbers_mode(buffer, digits_e, sizeof(digits_e));
+            break;
+        case TEST:
+            fill_test_mode(buffer);
+            break;
+        case BEEP:
+            fill_beep_mode(buffer);
             break;
     }
 }

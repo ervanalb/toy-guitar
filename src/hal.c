@@ -94,6 +94,9 @@ void hal_init(void) {
     dac_trigger_enable(CHANNEL_1);
 	dac_set_trigger_source(DAC_CR_TSEL1_T2); // Trigger on timer 2
 	dac_enable(CHANNEL_1);
+
+    // Reset encoder
+    hal_encoder();
 }
 
 uint32_t hal_buttons() {
@@ -114,13 +117,26 @@ uint32_t hal_buttons() {
 }
 
 int hal_encoder() {
-    static bool last_a;
-
     bool a = !gpio_get(GPIOA, GPIO12);
     bool b = !gpio_get(GPIOB, GPIO0);
+
+    static uint32_t a_filter = 0, b_filter = 0;
+    a_filter = (a_filter << 1) | a;
+    b_filter = (b_filter << 1) | b;
+    if ((a_filter != 0 && a_filter != (uint32_t)-1) || (b_filter != 0 && b_filter != (uint32_t) -1))
+        return 0;
+
+    static uint8_t a_filter2 = 0, b_filter2 = 0;
+    a_filter2 = (a_filter2 << 1) | a;
+    b_filter2 = (b_filter2 << 1) | b;
+    if ((a_filter2 != 0 && a_filter2 != (uint8_t)-1) || (b_filter2 != 0 && b_filter2 != (uint8_t) -1))
+        return 0;
+
+    static bool last_a, last_b;
+
     int result = 0;
 
-    if (a && a != last_a) {
+    if (a && a != last_a) { // rising edge of A
         if (b) {
             result = 1;
         } else {
@@ -129,6 +145,7 @@ int hal_encoder() {
     }
 
     last_a = a;
+    last_b = b;
 
     return result;
 }

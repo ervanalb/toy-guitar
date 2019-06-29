@@ -18,12 +18,12 @@ static const uint8_t digits_e[] = {2,7,1,8,2,8};
 // (t*5&t>>7)|(t*3&t>>10)
 #define PROGRAM_MAX_LEN 1024
 static uint8_t current_program[PROGRAM_MAX_LEN] = {
-    END,
+    0, 0, // filler
     T, 5, MUL,
     T, 7, SHR,
         AND,
-    T, 3, MUL,
-    T, A, SHR,
+    U, 3, MUL,
+    U, A, SHR,
         AND,
             OR,
     END,

@@ -120,11 +120,15 @@ int hal_encoder() {
     bool a = !gpio_get(GPIOA, GPIO12);
     bool b = !gpio_get(GPIOB, GPIO0);
 
+    // Filter so we need to have the same value 32 * 8 times in a row
     static uint32_t a_filter = 0, b_filter = 0;
     a_filter = (a_filter << 1) | a;
     b_filter = (b_filter << 1) | b;
     if ((a_filter != 0 && a_filter != (uint32_t)-1) || (b_filter != 0 && b_filter != (uint32_t) -1))
         return 0;
+
+    a_filter ^= 0x55;
+    b_filter ^= 0x55;
 
     static uint8_t a_filter2 = 0, b_filter2 = 0;
     a_filter2 = (a_filter2 << 1) | a;

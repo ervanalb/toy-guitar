@@ -4,16 +4,7 @@
 #include "birb/birb.h"
 
 #define ROM __attribute__ ((section (".rodata")))
-#include "audio/0.h"
-#include "audio/1.h"
-#include "audio/2.h"
-#include "audio/3.h"
-#include "audio/4.h"
-#include "audio/5.h"
-#include "audio/6.h"
-#include "audio/7.h"
-#include "audio/8.h"
-#include "audio/9.h"
+#include "audio.h"
 
 #define SAMPLE_RATE_HIGH 44100
 static uint32_t audio_lengths[32];

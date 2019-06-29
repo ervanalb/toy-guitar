@@ -17,12 +17,10 @@ OPENCM3_DIR=libopencm3
 CFILES += src/main.c
 CFILES += src/hal.c
 
-audio/%.h: audio/%.wav
-	echo "static unsigned char audio_$*[] ROM = {" > $@
-	sox $^ -t u8 -r 8000 - | xxd -i >> $@
-	echo "};" >> $@
+src/audio.h: $(wildcard audio/*.wav)
+	./generate_audio.sh $@ $^
 
-bin/src/main.o: $(patsubst %.wav,%.h,$(wildcard audio/*.wav))
+bin/src/main.o: src/audio.h
 
 include $(OPENCM3_DIR)/mk/genlink-config.mk
 include rules.mk
@@ -38,3 +36,5 @@ load: $(PROJECT).elf
 #	$(PREFIX)gdb $(PROJECT).elf -batch -x init.gdb -ex load -ex kill -ex quit
 stflash: $(PROJECT).bin
 	st-flash write $(PROJECT).bin 0x08000000
+
+.DEFAULT: all

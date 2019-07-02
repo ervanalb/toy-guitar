@@ -74,20 +74,24 @@ static int fill_sample(uint8_t *buffer, uint8_t sample_id) {
     static uint32_t counter = 0;
     static uint16_t last = 0;
 
+    uint32_t i = 0;
     if (sample_id >= 32) {
         goto finished_sample;
     }
 
-    uint32_t i = 0;
 #define SCALE 5
     for (; i < BUFFER_SIZE; i++) {
         uint16_t index = counter / SCALE;
-        if (index >= (audio_lengths[sample_id] - 1)) {
+        if (index >= (audio_lengths[sample_id] - 2)) {
             goto finished_sample;
         }
         uint16_t fade = counter % SCALE;
-        buffer[i] = (audios[sample_id][index+1] * fade) / SCALE;
-        buffer[i] += (audios[sample_id][index] * (SCALE - fade)) / SCALE;
+        int sample = 0;
+        sample += (((int)audios[sample_id][index+1] - 0x80) * fade) / SCALE;
+        sample += (((int)audios[sample_id][index] - 0x80) * (SCALE - fade)) / SCALE;
+        sample /= 1;
+        sample += 0x80;
+        buffer[i] = sample;
         //buffer[i] = (last + buffer[i]) / 2;
         last = buffer[i];
         counter++;

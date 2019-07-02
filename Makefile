@@ -1,7 +1,7 @@
 PROJECT=toy-guitar
 BUILD_DIR=bin
 
-OPT = -O0
+OPT = -O2
 LDFLAGS += -Xlinker -Map=$(PROJECT).map
 CFLAGS += -ggdb3
 #CFLAGS += -flto
@@ -32,8 +32,8 @@ gdb: $(PROJECT).elf
 	$(PREFIX)gdb $(PROJECT).elf -x init.gdb
 load: $(PROJECT).elf
 	$(PREFIX)gdb $(PROJECT).elf -x init.gdb -ex load
-#loadquit: $(PROJECT).elf
-#	$(PREFIX)gdb $(PROJECT).elf -batch -x init.gdb -ex load -ex kill -ex quit
+loadquit: $(PROJECT).elf
+	$(PREFIX)gdb $(PROJECT).elf -batch -x init.gdb -ex load -ex kill -ex quit
 stflash: $(PROJECT).bin
 	st-flash write $(PROJECT).bin 0x08000000
 
